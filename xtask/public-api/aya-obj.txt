@@ -5635,6 +5635,8 @@ pub aya_obj::relocation::RelocationError::FunctionInfoMismatch::name: alloc::str
 pub aya_obj::relocation::RelocationError::InvalidRelocationOffset
 pub aya_obj::relocation::RelocationError::InvalidRelocationOffset::offset: u64
 pub aya_obj::relocation::RelocationError::InvalidRelocationOffset::relocation_number: usize
+pub aya_obj::relocation::RelocationError::LineInfoMismatch
+pub aya_obj::relocation::RelocationError::LineInfoMismatch::name: alloc::string::String
 pub aya_obj::relocation::RelocationError::SectionNotFound
 pub aya_obj::relocation::RelocationError::SectionNotFound::section_index: usize
 pub aya_obj::relocation::RelocationError::SectionNotFound::symbol_index: usize

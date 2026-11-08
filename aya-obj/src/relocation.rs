@@ -73,6 +73,13 @@ pub enum RelocationError {
         name: String,
     },
 
+    /// BTF line info mismatch
+    #[error("BTF line info for `{name}` does not match the program")]
+    LineInfoMismatch {
+        /// The function name
+        name: String,
+    },
+
     /// Unknown function
     #[error(
         "program at section {section_index} and address {address:#x} was not found while relocating"
@@ -515,12 +522,15 @@ impl<'a> FunctionLinker<'a> {
             section_offset: _,
             instructions,
             func_info,
-            line_info: _,
+            line_info,
             func_info_rec_size: _,
             line_info_rec_size: _,
         } = fun;
         if func_info.func_info.is_empty() != program.func_info.func_info.is_empty() {
             return Err(RelocationError::FunctionInfoMismatch { name: name.clone() });
+        }
+        if line_info.line_info.is_empty() != program.line_info.line_info.is_empty() {
+            return Err(RelocationError::LineInfoMismatch { name: name.clone() });
         }
         let start_ins = match self.linked_functions.entry((*section_index, *address)) {
             Entry::Occupied(entry) => return Ok(*entry.get()),
@@ -703,6 +713,7 @@ mod test {
     use super::*;
     use crate::{
         extern_types::ExternType,
+        generated::{bpf_func_info, bpf_line_info},
         maps::{BtfMap, LegacyMap},
     };
 
@@ -769,6 +780,78 @@ mod test {
             func_info_rec_size: Default::default(),
             line_info_rec_size: Default::default(),
         }
+    }
+
+    fn link_with_line_info(
+        program_has_line_info: bool,
+        callee_has_line_info: bool,
+    ) -> Result<Function, RelocationError> {
+        let mut program = fake_func(
+            "program",
+            vec![
+                ins(&[0x85, 0x10, 0, 0, 1, 0, 0, 0]),
+                ins(&[0x95, 0, 0, 0, 0, 0, 0, 0]),
+            ],
+        );
+        let mut callee = fake_func("callee", vec![ins(&[0x95, 0, 0, 0, 0, 0, 0, 0])]);
+        callee.address = (2 * INS_SIZE) as u64;
+        callee.section_offset = 2 * INS_SIZE;
+
+        for fun in [&mut program, &mut callee] {
+            fun.func_info.func_info.push(bpf_func_info {
+                insn_off: 0,
+                type_id: 1,
+            });
+            fun.func_info.num_info = 1;
+        }
+        if program_has_line_info {
+            program.line_info.line_info.push(bpf_line_info {
+                insn_off: 0,
+                file_name_off: 1,
+                line_off: 1,
+                line_col: 0,
+            });
+            program.line_info.num_info = 1;
+        }
+        if callee_has_line_info {
+            callee.line_info.line_info.push(bpf_line_info {
+                insn_off: 2,
+                file_name_off: 1,
+                line_off: 1,
+                line_col: 0,
+            });
+            callee.line_info.num_info = 1;
+        }
+
+        let functions = BTreeMap::from([((0, callee.address), callee)]);
+        let relocations = HashMap::new();
+        let symbol_table = HashMap::new();
+        let text_sections = HashSet::new();
+        FunctionLinker::new(&functions, &relocations, &symbol_table, &text_sections).link(&program)
+    }
+
+    #[test]
+    fn test_mismatched_line_info() {
+        for (program_has_line_info, callee_has_line_info) in [(true, false), (false, true)] {
+            let error =
+                link_with_line_info(program_has_line_info, callee_has_line_info).unwrap_err();
+            assert!(matches!(
+                error,
+                RelocationError::LineInfoMismatch { name } if name == "callee"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_matching_line_info() {
+        let linked = link_with_line_info(false, false).unwrap();
+        assert_eq!(linked.instructions.len(), 3);
+        assert!(linked.line_info.line_info.is_empty());
+
+        let linked = link_with_line_info(true, true).unwrap();
+        assert_eq!(linked.instructions.len(), 3);
+        assert_eq!(linked.line_info.line_info.len(), 2);
+        assert_eq!(linked.line_info.line_info[1].insn_off, 2);
     }
 
     #[test]
